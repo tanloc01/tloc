@@ -1,0 +1,177 @@
+-- // FastAttack Module by rz (cleaned & optimized)
+-- // Usage: 
+-- _G.FastAttack = true
+-- _G.FastAttackEnabled = true
+-- loadstring(game:HttpGet("https://raw.githubusercontent.com/<username>/<repo>/main/FastAttack.lua"))()
+
+local function SafeWaitForChild(parent, childName)
+    local success, result = pcall(function()
+        return parent:WaitForChild(childName)
+    end)
+    if not success or not result then
+        warn("[FastAttack] Không tìm thấy:", childName)
+    end
+    return result
+end
+
+local function GetNearestEnemy()
+    local closestEnemy = nil
+    local shortestDistance = math.huge
+    local player = game.Players.LocalPlayer
+    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
+    for _, v in pairs(game:GetService("Workspace").Enemies:GetChildren()) do
+        if v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then
+            local distance = (v.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude
+            if distance < shortestDistance then
+                closestEnemy = v
+                shortestDistance = distance
+            end
+        end
+    end
+    return closestEnemy
+end
+
+local Module = {}
+local _ENV = (getgenv or getrenv or getfenv)()
+
+Module.FastAttack = (function()
+    if _ENV.rz_FastAttack then
+        return _ENV.rz_FastAttack
+    end
+
+    local FastAttack = {
+        Distance = 500,
+        attackMobs = true,
+        attackPlayers = true,
+    }
+
+    local Players = game:GetService("Players")
+    local Player = Players.LocalPlayer
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local RunService = game:GetService("RunService")
+    local Workspace = game:GetService("Workspace")
+
+    local Remotes = SafeWaitForChild(ReplicatedStorage, "Remotes")
+    if not Remotes then return end
+
+    local Modules = SafeWaitForChild(ReplicatedStorage, "Modules")
+    local Net = SafeWaitForChild(Modules, "Net")
+    local RegisterAttack = SafeWaitForChild(Net, "RE/RegisterAttack")
+    local RegisterHit = SafeWaitForChild(Net, "RE/RegisterHit")
+
+    local Characters = SafeWaitForChild(Workspace, "Characters")
+    local Enemies = SafeWaitForChild(Workspace, "Enemies")
+
+    local function IsAlive(character)
+        return character and character:FindFirstChild("Humanoid") and character.Humanoid.Health > 0
+    end
+
+    local function ProcessEnemies(OthersEnemies, Folder)
+        local BasePart = nil
+        for _, Enemy in Folder:GetChildren() do
+            local Head = Enemy:FindFirstChild("Head")
+            if Head and IsAlive(Enemy) and Player:DistanceFromCharacter(Head.Position) < FastAttack.Distance then
+                if Enemy ~= Player.Character then
+                    table.insert(OthersEnemies, { Enemy, Head })
+                    BasePart = Head
+                end
+            end
+        end
+        return BasePart
+    end
+
+    function FastAttack:Attack(BasePart, OthersEnemies)
+        if not BasePart or #OthersEnemies == 0 then return end
+        if RegisterAttack then
+            RegisterAttack:FireServer(0)
+        end
+        if RegisterHit then
+            RegisterHit:FireServer(BasePart, OthersEnemies)
+        end
+    end
+
+    function FastAttack:AttackNearest()
+        local OthersEnemies = {}
+        local Part1 = ProcessEnemies(OthersEnemies, Enemies)
+        local Part2 = ProcessEnemies(OthersEnemies, Characters)
+        local character = Player.Character
+        if not character then return end
+        local equippedWeapon = character:FindFirstChildOfClass("Tool")
+
+        if equippedWeapon and equippedWeapon:FindFirstChild("LeftClickRemote") then
+            for _, enemyData in ipairs(OthersEnemies) do
+                local enemy = enemyData[1]
+                if enemy and enemy:FindFirstChild("HumanoidRootPart") then
+                    local direction = (enemy.HumanoidRootPart.Position - character:GetPivot().Position).Unit
+                    pcall(function()
+                        equippedWeapon.LeftClickRemote:FireServer(direction, 1)
+                    end)
+                end
+            end
+        elseif #OthersEnemies > 0 then
+            self:Attack(Part1 or Part2, OthersEnemies)
+        end
+    end
+
+    function FastAttack:GunFire()
+        local Equipped = IsAlive(Player.Character) and Player.Character:FindFirstChildOfClass("Tool")
+        if not Equipped then return end
+
+        local Enemy = GetNearestEnemy()
+        if Enemy and Enemy:FindFirstChild("HumanoidRootPart") then
+            if Player.Character and Player.Character:FindFirstChild("HumanoidRootPart") then
+                Player.Character.HumanoidRootPart.CFrame = CFrame.lookAt(
+                    Player.Character.HumanoidRootPart.Position,
+                    Enemy.HumanoidRootPart.Position
+                )
+            end
+        end
+
+        if Equipped:FindFirstChild("RemoteFunctionShoot") then
+            Equipped.RemoteFunctionShoot:InvokeServer(true)
+        end
+    end
+
+    function FastAttack:BladeHits()
+        local Equipped = IsAlive(Player.Character) and Player.Character:FindFirstChildOfClass("Tool")
+        if Equipped then
+            if Equipped.ToolTip == "Gun" then
+                self:GunFire()
+            else
+                self:AttackNearest()
+            end
+        end
+    end
+
+    _ENV.rz_FastAttack = FastAttack
+    return FastAttack
+end)()
+
+-- // Auto loop (RenderStepped)
+local FastAttackConnection = nil
+local function FastAttackFunction()
+    if getgenv().FastAttackEnabled then
+        if not FastAttackConnection then
+            FastAttackConnection = game:GetService("RunService").RenderStepped:Connect(function()
+                if getgenv().FastAttackEnabled and Module.FastAttack then
+                    pcall(function()
+                        Module.FastAttack:BladeHits()
+                    end)
+                end
+            end)
+        end
+    else
+        if FastAttackConnection then
+            FastAttackConnection:Disconnect()
+            FastAttackConnection = nil
+        end
+    end
+end
+
+-- // Auto start nếu _G.FastAttack bật
+if _G.FastAttack then
+    getgenv().FastAttackEnabled = true
+    FastAttackFunction()
+end
+
+return Module.FastAttack
